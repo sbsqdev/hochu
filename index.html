@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>хочу · hochu</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app"></div>
+
+  <!-- Auth gate -->
+  <div id="auth-screen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <span class="logo-mark">хочу</span>
+        <span class="logo-dot">·</span>
+        <span class="logo-sub" data-i18n="tagline">your wishes, ranked &amp; realized</span>
+      </div>
+
+      <div class="lang-switch auth-lang" id="auth-lang"></div>
+
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-authtab="signin" data-i18n="signin">Sign in</button>
+        <button class="auth-tab" data-authtab="signup" data-i18n="signup">Sign up</button>
+      </div>
+
+      <form id="auth-form" class="auth-form" autocomplete="off">
+        <label class="field signup-only" style="display:none">
+          <span data-i18n="name">Name</span>
+          <input type="text" id="auth-name" />
+        </label>
+        <label class="field">
+          <span data-i18n="handle">Username</span>
+          <input type="text" id="auth-handle" placeholder="@manti_lover" />
+        </label>
+        <label class="field">
+          <span data-i18n="pin">PIN (local only)</span>
+          <input type="password" id="auth-pin" inputmode="numeric" maxlength="8" placeholder="••••" />
+        </label>
+        <button type="submit" class="btn btn-primary btn-block" id="auth-submit" data-i18n="signin">Sign in</button>
+        <p class="auth-note" data-i18n="localNote">Demo account — stored only in this browser.</p>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="i18n.js"></script>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
