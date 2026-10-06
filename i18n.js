@@ -16,8 +16,12 @@ window.I18N = {
 
     nav_feed: "Feed",
     nav_mine: "My hochu",
+    nav_graph: "Graph",
     nav_friends: "Friends",
     nav_coach: "Coach",
+    graph_hint: "Drag to rotate · scroll to zoom · hover a node",
+    graph_empty: "Add a few hochu — watch them connect by category & #tags.",
+    graph_legend: "Connected by shared category and hashtags",
     newWish: "+ New hochu",
     signout: "Sign out",
 
@@ -134,8 +138,12 @@ window.I18N = {
 
     nav_feed: "Лента",
     nav_mine: "Мои хочу",
+    nav_graph: "Граф",
     nav_friends: "Друзья",
     nav_coach: "Коуч",
+    graph_hint: "Тяни чтобы вращать · колесо — зум · наведи на узел",
+    graph_empty: "Добавь несколько хочу — увидишь связи по категориям и #тегам.",
+    graph_legend: "Связаны по общей категории и хэштегам",
     newWish: "+ Новое хочу",
     signout: "Выйти",
 
@@ -247,8 +255,12 @@ window.I18N = {
 
     nav_feed: "Akış",
     nav_mine: "İsteklerim",
+    nav_graph: "Grafik",
     nav_friends: "Arkadaşlar",
     nav_coach: "Koç",
+    graph_hint: "Döndürmek için sürükle · yakınlaştırmak için kaydır · düğümün üzerine gel",
+    graph_empty: "Birkaç istek ekle — kategori ve #etiketlerle bağlandıklarını gör.",
+    graph_legend: "Ortak kategori ve etiketlerle bağlı",
     newWish: "+ Yeni istek",
     signout: "Çıkış",
 

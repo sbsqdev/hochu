@@ -186,6 +186,7 @@
     const items = [
       ["feed","🌐","nav_feed"],
       ["mine","✨","nav_mine"],
+      ["graph","🪐","nav_graph"],
       ["friends","👥","nav_friends"],
       ["coach","🧭","nav_coach"],
     ];
@@ -209,7 +210,7 @@
     const d = myData(), u = users()[me] || {};
     const lvl = levelOf(d.xp);
     const into = d.xp % LVL_STEP, pct = Math.round(into / LVL_STEP * 100);
-    const titles = { feed:"nav_feed", mine:"nav_mine", friends:"friends_t", coach:"coach_t" };
+    const titles = { feed:"nav_feed", mine:"nav_mine", graph:"nav_graph", friends:"friends_t", coach:"coach_t" };
     return `
       <div class="topbar">
         <h1>${T(titles[view])}</h1>
@@ -245,9 +246,11 @@
   }
 
   function renderView() {
+    stopGraph();
     const v = document.getElementById("view");
     if (view === "mine") v.innerHTML = catRow() + grid(myWishes());
     else if (view === "feed") v.innerHTML = catRow() + grid(feedWishes());
+    else if (view === "graph") { v.innerHTML = graphView(); setupGraph(); }
     else if (view === "friends") v.innerHTML = friendsView();
     else if (view === "coach") v.innerHTML = coachView();
     bindView();
@@ -554,6 +557,256 @@
     saveMy(d);
     view = "mine"; render(); renderView();
     toast("✓");
+  }
+
+  // =====================================================
+  //  GRAPH VIEW — 3D force-directed "Obsidian" map
+  // =====================================================
+  const G = { raf: 0, nodes: [], links: [], adj: null, ay: 0.4, ax: -0.25,
+    zoom: 1, drag: false, lx: 0, ly: 0, hover: null, auto: true, cx: 0, cy: 0 };
+
+  function stopGraph() { if (G.raf) { cancelAnimationFrame(G.raf); G.raf = 0; } }
+
+  function graphView() {
+    const n = myData().wishes.length;
+    if (!n) return `<div class="empty"><div class="em">🪐</div>
+      <h3>${T("nav_graph")}</h3><p>${T("graph_empty")}</p></div>`;
+    return `
+      <div class="graph-wrap">
+        <canvas id="graph-canvas"></canvas>
+        <div class="graph-hint">🖱️ ${T("graph_hint")}</div>
+        <div class="graph-legend" id="graph-legend"></div>
+        <div class="graph-tip" id="graph-tip"></div>
+      </div>`;
+  }
+
+  function buildGraph() {
+    const wishes = myData().wishes;
+    const nodes = [], links = [];
+    const rand = () => (Math.random() - 0.5) * 240;
+    const mk = (o) => { const nd = Object.assign({ x: rand(), y: rand(), z: rand(), vx: 0, vy: 0, vz: 0 }, o); nodes.push(nd); return nodes.length - 1; };
+
+    // central "me" node
+    const u = users()[me] || {};
+    const meIdx = mk({ type: "me", label: "@" + me, emoji: u.avatar || "🙂", r: 24, color: "#ece9f3", x: 0, y: 0, z: 0 });
+
+    // category hubs (only categories in use)
+    const hubIdx = {};
+    wishes.forEach(w => {
+      if (hubIdx[w.cat] == null) {
+        const c = window.CATS.find(x => x.id === w.cat) || { icon: "🎯", color: "#a378ff" };
+        hubIdx[w.cat] = mk({ type: "cat", label: T("cat_" + w.cat), emoji: c.icon, r: 15, color: c.color, cat: w.cat });
+        links.push({ a: meIdx, b: hubIdx[w.cat], len: 150, k: 0.02 });
+      }
+    });
+
+    // wish nodes
+    const byTag = {};
+    wishes.forEach(w => {
+      const c = window.CATS.find(x => x.id === w.cat) || { color: "#a378ff" };
+      const prioBoost = { low: 0, med: 2, high: 4, urgent: 6 }[w.prio] || 0;
+      const i = mk({ type: "wish", label: w.title, r: 7 + prioBoost, color: c.color,
+        done: w.done, prio: w.prio, cat: w.cat, wid: w.id });
+      links.push({ a: hubIdx[w.cat], b: i, len: 78, k: 0.03 });
+      (w.tags || []).forEach(t => { (byTag[t] = byTag[t] || []).push(i); });
+    });
+    // hashtag links between wishes sharing a tag
+    Object.values(byTag).forEach(arr => {
+      for (let p = 0; p < arr.length; p++)
+        for (let q = p + 1; q < arr.length; q++)
+          links.push({ a: arr[p], b: arr[q], len: 55, k: 0.015, tag: true });
+    });
+
+    // adjacency for highlight
+    const adj = nodes.map(() => new Set());
+    links.forEach(l => { adj[l.a].add(l.b); adj[l.b].add(l.a); });
+
+    G.nodes = nodes; G.links = links; G.adj = adj;
+  }
+
+  function setupGraph() {
+    buildGraph();
+    const canvas = document.getElementById("graph-canvas");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    let dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    function resize() {
+      const r = canvas.parentElement.getBoundingClientRect();
+      canvas.width = r.width * dpr; canvas.height = r.height * dpr;
+      canvas.style.width = r.width + "px"; canvas.style.height = r.height + "px";
+      G.cx = canvas.width / 2; G.cy = canvas.height / 2;
+    }
+    resize();
+    const onResize = () => resize();
+    window.addEventListener("resize", onResize);
+
+    // legend
+    const used = [...new Set(myData().wishes.map(w => w.cat))];
+    document.getElementById("graph-legend").innerHTML =
+      `<div class="gl-title">${T("graph_legend")}</div>` +
+      used.map(c => { const cc = window.CATS.find(x => x.id === c);
+        return `<span class="gl-item"><i style="background:${cc.color}"></i>${cc.icon} ${T("cat_" + c)}</span>`; }).join("");
+
+    const focal = 520;
+    function project(nd) {
+      const cosY = Math.cos(G.ay), sinY = Math.sin(G.ay);
+      let x1 = nd.x * cosY - nd.z * sinY;
+      let z1 = nd.x * sinY + nd.z * cosY;
+      const cosX = Math.cos(G.ax), sinX = Math.sin(G.ax);
+      let y1 = nd.y * cosX - z1 * sinX;
+      let z2 = nd.y * sinX + z1 * cosX;
+      const s = focal / (focal + z2) * G.zoom * dpr;
+      nd._sx = G.cx + x1 * s; nd._sy = G.cy + y1 * s; nd._s = s; nd._z = z2;
+    }
+
+    function physics() {
+      const N = G.nodes;
+      // repulsion
+      for (let i = 0; i < N.length; i++) {
+        for (let j = i + 1; j < N.length; j++) {
+          const a = N[i], b = N[j];
+          let dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+          let d2 = dx * dx + dy * dy + dz * dz + 0.01;
+          let d = Math.sqrt(d2);
+          const f = 900 / d2;
+          const ux = dx / d, uy = dy / d, uz = dz / d;
+          a.vx += ux * f; a.vy += uy * f; a.vz += uz * f;
+          b.vx -= ux * f; b.vy -= uy * f; b.vz -= uz * f;
+        }
+      }
+      // springs
+      G.links.forEach(l => {
+        const a = N[l.a], b = N[l.b];
+        let dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+        let d = Math.sqrt(dx * dx + dy * dy + dz * dz) + 0.01;
+        const f = (d - l.len) * l.k;
+        const ux = dx / d, uy = dy / d, uz = dz / d;
+        a.vx += ux * f; a.vy += uy * f; a.vz += uz * f;
+        b.vx -= ux * f; b.vy -= uy * f; b.vz -= uz * f;
+      });
+      // centering + integrate + damping
+      N.forEach((n, i) => {
+        n.vx += -n.x * 0.0016; n.vy += -n.y * 0.0016; n.vz += -n.z * 0.0016;
+        n.vx *= 0.86; n.vy *= 0.86; n.vz *= 0.86;
+        if (i === 0) { n.x = n.y = n.z = 0; return; } // pin "me" at center
+        n.x += n.vx; n.y += n.vy; n.z += n.vz;
+      });
+    }
+
+    function hexA(hex, a) {
+      const n = parseInt(hex.slice(1), 16);
+      return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      G.nodes.forEach(project);
+      const hv = G.hover;
+      const lit = hv ? (idx) => (idx === hv || G.adj[hv].has(idx)) : null;
+
+      // links (sorted far→near by midpoint z)
+      const order = G.links.map((l, i) => i).sort((p, q) =>
+        (G.nodes[G.links[q].a]._z + G.nodes[G.links[q].b]._z) - (G.nodes[G.links[p].a]._z + G.nodes[G.links[p].b]._z));
+      order.forEach(i => {
+        const l = G.links[i], a = G.nodes[l.a], b = G.nodes[l.b];
+        const on = !hv || (lit(l.a) && lit(l.b));
+        const depth = Math.max(0.1, Math.min(1, a._s / (1.2 * dpr)));
+        ctx.strokeStyle = l.tag ? hexA("#a378ff", (on ? 0.5 : 0.05) * depth)
+                                : `rgba(160,150,180,${(on ? 0.32 : 0.05) * depth})`;
+        ctx.lineWidth = (l.tag ? 1 : 1.2) * depth;
+        ctx.beginPath(); ctx.moveTo(a._sx, a._sy); ctx.lineTo(b._sx, b._sy); ctx.stroke();
+      });
+
+      // nodes (far→near)
+      const nord = G.nodes.map((_, i) => i).sort((p, q) => G.nodes[q]._z - G.nodes[p]._z);
+      nord.forEach(idx => {
+        const n = G.nodes[idx];
+        const on = !hv || lit(idx);
+        const r = n.r * n._s;
+        ctx.globalAlpha = n.done ? (on ? 0.5 : 0.12) : (on ? 1 : 0.18);
+        // glow
+        const grd = ctx.createRadialGradient(n._sx, n._sy, 0, n._sx, n._sy, r * 2.4);
+        grd.addColorStop(0, hexA(n.color, 0.5)); grd.addColorStop(1, hexA(n.color, 0));
+        ctx.fillStyle = grd;
+        ctx.beginPath(); ctx.arc(n._sx, n._sy, r * 2.4, 0, 7); ctx.fill();
+        // core
+        ctx.fillStyle = n.color;
+        ctx.beginPath(); ctx.arc(n._sx, n._sy, r, 0, 7); ctx.fill();
+        ctx.lineWidth = 1.5; ctx.strokeStyle = "rgba(20,18,24,.6)"; ctx.stroke();
+        // emoji on me/cat, or when hovered/near
+        if (n.type !== "wish" || (hv && on)) {
+          ctx.globalAlpha = on ? 1 : 0.25;
+          const fs = (n.type === "wish" ? 11 : n.r * 0.95) * n._s;
+          if (n.emoji) { ctx.font = `${Math.max(9, fs)}px system-ui`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText(n.emoji, n._sx, n._sy); }
+        }
+        // labels for me + cats always; wishes when lit
+        const showLabel = n.type !== "wish" || (hv && on) || n._s > 1.5 * dpr;
+        if (showLabel) {
+          ctx.globalAlpha = on ? 0.95 : 0.2;
+          const fs = Math.max(10, (n.type === "wish" ? 11.5 : 13) * Math.min(n._s, 1.6));
+          ctx.font = `${n.type === "wish" ? 600 : 700} ${fs}px Inter, system-ui`;
+          ctx.textAlign = "center"; ctx.textBaseline = "top";
+          ctx.fillStyle = "#ece9f3";
+          const lbl = n.label.length > 26 ? n.label.slice(0, 25) + "…" : n.label;
+          ctx.fillText(lbl, n._sx, n._sy + r + 3 * dpr);
+        }
+      });
+      ctx.globalAlpha = 1;
+    }
+
+    function tick() {
+      physics();
+      if (G.auto && !G.drag && !G.hover) G.ay += 0.0022;
+      draw();
+      G.raf = requestAnimationFrame(tick);
+    }
+
+    // interaction
+    const pos = (e) => { const r = canvas.getBoundingClientRect();
+      const t = e.touches ? e.touches[0] : e;
+      return { x: (t.clientX - r.left) * dpr, y: (t.clientY - r.top) * dpr }; };
+    function hit(p) {
+      let best = null, bd = 18 * dpr;
+      G.nodes.forEach((n, i) => { const d = Math.hypot(n._sx - p.x, n._sy - p.y);
+        if (d < Math.max(n.r * n._s + 6 * dpr, bd) && d < (best ? best.d : 1e9)) best = { i, d }; });
+      return best ? best.i : null;
+    }
+    const tip = document.getElementById("graph-tip");
+    function onMove(e) {
+      const p = pos(e);
+      if (G.drag) {
+        G.ay += (p.x - G.lx) * 0.005 / dpr;
+        G.ax += (p.y - G.ly) * 0.005 / dpr;
+        G.ax = Math.max(-1.4, Math.min(1.4, G.ax));
+        G.lx = p.x; G.ly = p.y;
+      } else {
+        const h = hit(p); G.hover = h;
+        canvas.style.cursor = h != null ? "pointer" : "grab";
+        if (h != null) {
+          const n = G.nodes[h];
+          tip.textContent = (n.emoji ? n.emoji + "  " : "") + n.label;
+          tip.classList.add("show");
+        } else tip.classList.remove("show");
+      }
+    }
+    const onDown = (e) => { G.drag = true; const p = pos(e); G.lx = p.x; G.ly = p.y; canvas.style.cursor = "grabbing"; };
+    const onUp = () => { G.drag = false; canvas.style.cursor = "grab"; };
+    const onWheel = (e) => { e.preventDefault(); G.zoom = Math.max(0.4, Math.min(2.6, G.zoom - e.deltaY * 0.0012)); };
+
+    canvas.addEventListener("mousemove", onMove);
+    canvas.addEventListener("mousedown", onDown);
+    window.addEventListener("mouseup", onUp);
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    canvas.addEventListener("touchstart", onDown, { passive: true });
+    canvas.addEventListener("touchmove", (e) => { onMove(e); }, { passive: true });
+    canvas.addEventListener("touchend", onUp);
+    canvas.style.cursor = "grab";
+
+    // reset view state each open
+    G.ay = 0.4; G.ax = -0.25; G.zoom = 1; G.hover = null;
+    tick();
   }
 
   // =====================================================

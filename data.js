@@ -1,15 +1,15 @@
 // hochu — static data: categories, coaching knowledge, demo seed
 window.CATS = [
-  { id: "goals",    icon: "🎯" },
-  { id: "habits",   icon: "🔁" },
-  { id: "health",   icon: "💪" },
-  { id: "travel",   icon: "✈️" },
-  { id: "leisure",  icon: "🌿" },
-  { id: "events",   icon: "🎟️" },
-  { id: "food",     icon: "🍽️" },
-  { id: "shopping", icon: "🛍️" },
-  { id: "career",   icon: "📈" },
-  { id: "love",     icon: "💘" },
+  { id: "goals",    icon: "🎯", color: "#a378ff" },
+  { id: "habits",   icon: "🔁", color: "#49d69d" },
+  { id: "health",   icon: "💪", color: "#ff6b7a" },
+  { id: "travel",   icon: "✈️", color: "#4db6ff" },
+  { id: "leisure",  icon: "🌿", color: "#8bd450" },
+  { id: "events",   icon: "🎟️", color: "#ffb454" },
+  { id: "food",     icon: "🍽️", color: "#ff8f6b" },
+  { id: "shopping", icon: "🛍️", color: "#f06bff" },
+  { id: "career",   icon: "📈", color: "#5bc8c8" },
+  { id: "love",     icon: "💘", color: "#ff5fa2" },
 ];
 
 // Evidence-based habit tips. source labels are real research traditions;
