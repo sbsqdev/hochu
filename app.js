@@ -274,6 +274,7 @@
           ${topbar()}
           <div id="view"></div>
         </div>
+        <button class="fab" data-act="new" title="${T("newWish")}" aria-label="${T("newWish")}">+</button>
       </div>`;
     bindShell();
     renderView();
@@ -332,7 +333,7 @@
 
   function bindShell() {
     document.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => { view = b.dataset.nav; catFilter = "all"; setFilter = null; render(); });
-    document.querySelector('[data-act="new"]').onclick = () => openCompose();
+    document.querySelectorAll('[data-act="new"]').forEach(b => b.onclick = () => openCompose());
     document.querySelectorAll('[data-act="support"]').forEach(b => b.onclick = openSupport);
     document.querySelector('[data-act="signout"]').onclick = async () => {
       if (window.SUPA_READY) { try { await window.sb.auth.signOut(); } catch (e) {} }
