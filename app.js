@@ -6,14 +6,16 @@
   const LS = {
     lang: "hochu.lang",
     session: "hochu.session",
-    users: "hochu.users",      // { handle: {name,pin,avatar} }
+    users: "hochu.users",      // { handle: {name,avatar,email,pass?,uid?} } — profile cache
+    emails: "hochu.emails",    // { email: handle } — local-mode login index
     data: "hochu.data",        // { handle: {wishes:[], friends:[], likes:{}, xp, streak, lastActive} }
   };
   const PTS = { step: 10, done: 50 };
   const LVL_STEP = 200; // pts per level
 
   let lang = localStorage.getItem(LS.lang) || detectLang();
-  let me = localStorage.getItem(LS.session) || null;
+  let me = localStorage.getItem(LS.session) || null;  // always the handle (username)
+  let authUid = null;                                  // Supabase auth user id, when in cloud mode
   let view = "mine";
   let catFilter = "all";
   let authMode = "signin";
@@ -43,11 +45,31 @@
   const app = document.getElementById("app");
   const authScreen = document.getElementById("auth-screen");
 
-  function boot() {
+  async function boot() {
     renderAuthLang();
     bindAuth();
-    if (me && users()[me]) { authScreen.classList.add("hidden"); updateStreak(); render(); }
-    else { authScreen.classList.remove("hidden"); applyI18nStatic(); }
+    document.querySelectorAll(".signup-only").forEach(el => el.style.display = "none");
+    setAuthNote();
+    if (window.SUPA_READY) {
+      try {
+        const { data } = await window.sb.auth.getSession();
+        if (data && data.session) { await loadSupaProfile(data.session.user); afterLogin(); return; }
+      } catch (e) { /* fall through to auth screen */ }
+      showAuth();
+    } else {
+      if (me && users()[me]) { authScreen.classList.add("hidden"); updateStreak(); render(); }
+      else showAuth();
+    }
+  }
+  function showAuth() { authScreen.classList.remove("hidden"); applyI18nStatic(); }
+  function afterLogin() {
+    seedIfEmpty(); updateStreak();
+    authScreen.classList.add("hidden");
+    view = "mine"; render();
+  }
+  function setAuthNote() {
+    const n = document.getElementById("auth-note");
+    if (n) n.setAttribute("data-i18n", window.SUPA_READY ? "cloudNote" : "localNote");
   }
 
   // ---------- i18n on static auth DOM ----------
@@ -76,33 +98,89 @@
       t.onclick = () => {
         authMode = t.dataset.authtab;
         document.querySelectorAll(".auth-tab").forEach(x => x.classList.toggle("active", x === t));
-        document.querySelector(".signup-only").style.display = authMode === "signup" ? "flex" : "none";
+        document.querySelectorAll(".signup-only").forEach(el => el.style.display = authMode === "signup" ? "flex" : "none");
         applyI18nStatic();
       };
     });
-    document.getElementById("auth-form").onsubmit = (e) => {
+    document.getElementById("auth-form").onsubmit = async (e) => {
       e.preventDefault();
-      const handle = normHandle(document.getElementById("auth-handle").value);
-      const pin = document.getElementById("auth-pin").value.trim();
       const name = document.getElementById("auth-name").value.trim();
-      if (!handle) return toast(T("needHandle"));
-      if (!pin) return toast(T("needPin"));
-      const db = users();
-      if (authMode === "signup") {
-        if (db[handle]) return toast(T("takenHandle"));
-        db[handle] = { name: name || handle, pin, avatar: pickAvatar() };
-        write(LS.users, db);
-      } else {
-        if (!db[handle]) return toast(T("wrongPin"));
-        if (db[handle].pin !== pin) return toast(T("wrongPin"));
+      const handle = normHandle(document.getElementById("auth-handle").value);
+      const email = document.getElementById("auth-email").value.trim().toLowerCase();
+      const password = document.getElementById("auth-pass").value;
+      if (!email || !email.includes("@")) return toast(T("needEmail"));
+      if (!password || password.length < 6) return toast(T("needPassword"));
+      if (authMode === "signup" && !handle) return toast(T("needHandle"));
+
+      const submit = document.getElementById("auth-submit");
+      submit.disabled = true; submit.textContent = T("working");
+      try {
+        if (window.SUPA_READY) {
+          if (authMode === "signup") await supaSignup({ name, handle, email, password });
+          else await supaSignin({ email, password });
+        } else {
+          if (authMode === "signup") localSignup({ name, handle, email, password });
+          else localSignin({ email, password });
+        }
+      } catch (err) {
+        toast((err && err.message) || T("wrongLogin"));
+      } finally {
+        submit.disabled = false; applyI18nStatic();
       }
-      me = handle; localStorage.setItem(LS.session, me);
-      seedIfEmpty();
-      updateStreak();
-      authScreen.classList.add("hidden");
-      view = "mine";
-      render();
     };
+  }
+
+  // ----- Supabase (cloud) auth -----
+  async function supaSignup({ name, handle, email, password }) {
+    // pre-check username availability (select is public per RLS)
+    const { data: taken } = await window.sb.from("profiles").select("handle").eq("handle", handle).maybeSingle();
+    if (taken) return toast(T("takenHandle"));
+    const { data, error } = await window.sb.auth.signUp({
+      email, password, options: { data: { name: name || handle, handle, avatar: pickAvatar() } },
+    });
+    if (error) return toast(error.message);
+    if (!data.session) return toast(T("checkEmail"));  // email confirmation is ON
+    await loadSupaProfile(data.user);
+    afterLogin();
+  }
+  async function supaSignin({ email, password }) {
+    const { data, error } = await window.sb.auth.signInWithPassword({ email, password });
+    if (error) return toast(T("wrongLogin"));
+    await loadSupaProfile(data.user);
+    afterLogin();
+  }
+  async function loadSupaProfile(user) {
+    authUid = user.id;
+    let { data: prof } = await window.sb.from("profiles").select("*").eq("id", user.id).maybeSingle();
+    if (!prof) {
+      const md = user.user_metadata || {};
+      prof = { id: user.id, handle: md.handle || ("u" + user.id.slice(0, 6)),
+        name: md.name || md.handle || "friend", avatar: md.avatar || pickAvatar() };
+      await window.sb.from("profiles").insert(prof);  // RLS: auth.uid() = id
+    }
+    me = prof.handle;
+    localStorage.setItem(LS.session, me);
+    const db = users(); db[me] = { name: prof.name, handle: prof.handle, avatar: prof.avatar, uid: user.id };
+    write(LS.users, db);
+  }
+
+  // ----- Local (on-device) auth fallback -----
+  function localSignup({ name, handle, email, password }) {
+    const db = users(), emap = read(LS.emails, {});
+    if (db[handle]) return toast(T("takenHandle"));
+    if (emap[email]) return toast(T("wrongLogin"));
+    db[handle] = { name: name || handle, handle, avatar: pickAvatar(), email, pass: password };
+    write(LS.users, db);
+    emap[email] = handle; write(LS.emails, emap);
+    me = handle; localStorage.setItem(LS.session, me);
+    afterLogin();
+  }
+  function localSignin({ email, password }) {
+    const emap = read(LS.emails, {}), db = users();
+    const handle = emap[email];
+    if (!handle || !db[handle] || db[handle].pass !== password) return toast(T("wrongLogin"));
+    me = handle; localStorage.setItem(LS.session, me);
+    afterLogin();
   }
   const normHandle = (s) => s.trim().replace(/^@/, "").toLowerCase().replace(/[^a-z0-9_]/g, "");
   const avatars = ["🦊","🐙","🌵","🦄","🐳","🦉","🌞","🍄","🪐","🐝","🦩","🫐"];
@@ -234,7 +312,10 @@
   function bindShell() {
     document.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => { view = b.dataset.nav; catFilter = "all"; render(); });
     document.querySelector('[data-act="new"]').onclick = () => openCompose();
-    document.querySelector('[data-act="signout"]').onclick = () => { me = null; localStorage.removeItem(LS.session); location.reload(); };
+    document.querySelector('[data-act="signout"]').onclick = async () => {
+      if (window.SUPA_READY) { try { await window.sb.auth.signOut(); } catch (e) {} }
+      me = null; authUid = null; localStorage.removeItem(LS.session); location.reload();
+    };
     const sl = document.getElementById("side-lang");
     Object.keys(window.I18N).forEach(code => {
       const b = document.createElement("button");
