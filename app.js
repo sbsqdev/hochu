@@ -1082,9 +1082,17 @@
       navigator.clipboard?.writeText(link).catch(() => {}); toast(T("copied"));
     };
     document.getElementById("story-download").onclick = () => {
-      canvas.toBlob((blob) => {
+      const link = storyState.mode === "list" ? profileLink() : wishLink(storyState.author, storyState.wishId);
+      canvas.toBlob(async (blob) => {
+        const file = new File([blob], `hochu-story-${Date.now()}.png`, { type: "image/png" });
+        // On phones: open the native share sheet (→ Instagram / Stories, Telegram, etc.)
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          try { await navigator.share({ files: [file], title: "хочу · hochu", text: T("story_cta"), url: link }); return; }
+          catch (e) { if (e && e.name === "AbortError") return; /* else fall through to download */ }
+        }
+        // Desktop / unsupported: download the PNG
         const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob); a.download = `hochu-story-${Date.now()}.png`;
+        a.href = URL.createObjectURL(blob); a.download = file.name;
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(a.href), 3000);
         toast(T("story_saved"));
