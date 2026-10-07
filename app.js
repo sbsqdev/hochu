@@ -329,7 +329,9 @@
   function renderView() {
     stopGraph();
     const v = document.getElementById("view");
-    if (view === "mine") v.innerHTML = catRow() + grid(myWishes());
+    if (view === "mine") v.innerHTML =
+      `<div class="mine-toolbar"><button class="btn btn-ghost btn-sm" data-act="makestory">${T("story_make")}</button></div>`
+      + catRow() + grid(myWishes());
     else if (view === "feed") v.innerHTML = catRow() + grid(feedWishes());
     else if (view === "graph") { v.innerHTML = graphView(); setupGraph(); }
     else if (view === "friends") v.innerHTML = friendsView();
@@ -429,6 +431,7 @@
           <button class="like-btn ${liked?'on':''}" data-like="${w.id}">${liked?'❤️':'🤍'} ${likeN}</button>
           ${mine && !w.done ? `<button class="icon-btn" data-complete="${w.id}" title="${T('complete')}">✓</button>`:''}
           ${mine && w.done ? `<button class="icon-btn" data-undo="${w.id}" title="${T('undo')}">↺</button>`:''}
+          <button class="icon-btn" data-story="${w.id}" data-storyauthor="${author}" title="${T('story_btn')}">📸</button>
           <button class="icon-btn" data-share="${w.id}" title="${T('share')}">🔗</button>
           ${mine ? `<button class="icon-btn" data-del="${w.id}" title="${T('delete')}">🗑️</button>`:''}
         </div>
@@ -462,6 +465,9 @@
     document.querySelectorAll("[data-undo]").forEach(b => b.onclick = () => undoWish(b.dataset.undo));
     document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => delWish(b.dataset.del));
     document.querySelectorAll("[data-share]").forEach(b => b.onclick = () => shareWish(b.dataset.share));
+    document.querySelectorAll("[data-story]").forEach(b => b.onclick = () => openStory("wish", b.dataset.story, b.dataset.storyauthor));
+    const ms = document.querySelector('[data-act="makestory"]');
+    if (ms) ms.onclick = () => openStory("list");
     document.querySelectorAll(".step[data-step]").forEach(el => {
       el.onclick = (e) => { e.preventDefault(); toggleStep(el.closest(".card").dataset.id, +el.dataset.step); };
     });
@@ -1016,6 +1022,233 @@
       close(); view = "mine"; render(); renderView();
     };
     setTimeout(() => document.getElementById("c-title").focus(), 50);
+  }
+
+  // =====================================================
+  //  STORY GENERATOR — auto 9:16 Instagram-story image + QR
+  // =====================================================
+  let storyState = null;
+
+  function wishLink(author, id) { return `${location.origin}${location.pathname}#/w/${author}/${id}`; }
+  function profileLink() { return `${location.origin}${location.pathname}#/u/${me}`; }
+  const prioColor = (p) => ({ low: "#9c93ad", med: "#a378ff", high: "#ffb454", urgent: "#ff6b7a" }[p] || "#a378ff");
+  function deadlineText(w) { const n = daysBetween(today(), w.deadline);
+    return n < 0 ? T("overdue") : n === 0 ? T("today") : n + " " + T("daysLeft"); }
+  function hexA(hex, a) { const n = parseInt(hex.slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; }
+
+  function openStory(mode, wishId, author) {
+    storyState = { mode, wishId: wishId || null, author: author || me };
+    const html = `
+      <div class="modal-bg" id="story-bg">
+        <div class="modal story-modal">
+          <h2>${mode === "list" ? T("story_title_list") : T("story_title_wish")}</h2>
+          ${wishId ? `<div class="seg story-modes" id="story-modes">
+              <button data-smode="wish" class="${mode === "wish" ? "on" : ""}">${T("story_mode_wish")}</button>
+              <button data-smode="list" class="${mode === "list" ? "on" : ""}">${T("story_mode_list")}</button>
+            </div>` : ""}
+          <div class="story-preview"><div class="story-canvas-wrap">
+            <canvas id="story-canvas" width="1080" height="1920"></canvas>
+          </div></div>
+          <div class="story-actions">
+            <button class="btn btn-ghost" id="story-copy">${T("story_copy")}</button>
+            <button class="btn btn-primary" id="story-download">${T("story_download")}</button>
+          </div>
+          <div class="modal-foot"><button class="btn btn-ghost" id="story-close">${T("cancel")}</button></div>
+        </div>
+      </div>`;
+    const wrap = document.createElement("div"); wrap.innerHTML = html;
+    document.body.appendChild(wrap.firstElementChild);
+
+    const bg = document.getElementById("story-bg");
+    const canvas = document.getElementById("story-canvas");
+    const close = () => bg.remove();
+    bg.onclick = (e) => { if (e.target === bg) close(); };
+    document.getElementById("story-close").onclick = close;
+
+    const paint = () => { try {
+      if (storyState.mode === "list") drawStoryList(canvas);
+      else drawStoryWish(canvas, storyState.wishId, storyState.author);
+    } catch (e) { console.warn(e); } };
+
+    if (wishId) document.querySelectorAll("#story-modes button").forEach(b => b.onclick = () => {
+      storyState.mode = b.dataset.smode;
+      document.querySelectorAll("#story-modes button").forEach(x => x.classList.toggle("on", x === b));
+      paint();
+    });
+
+    document.getElementById("story-copy").onclick = () => {
+      const link = storyState.mode === "list" ? profileLink() : wishLink(storyState.author, storyState.wishId);
+      navigator.clipboard?.writeText(link).catch(() => {}); toast(T("copied"));
+    };
+    document.getElementById("story-download").onclick = () => {
+      canvas.toBlob((blob) => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob); a.download = `hochu-story-${Date.now()}.png`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+        toast(T("story_saved"));
+      }, "image/png");
+    };
+
+    paint();
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(paint);
+  }
+
+  // ---- canvas drawing helpers ----
+  function roundRectPath(ctx, x, y, w, h, r) {
+    ctx.beginPath(); ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+  function wrapLines(ctx, text, maxW) {
+    const words = String(text).split(" "); const lines = []; let line = "";
+    for (const word of words) {
+      const test = line ? line + " " + word : word;
+      if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = word; }
+      else line = test;
+    }
+    if (line) lines.push(line); return lines;
+  }
+  function drawPillRow(ctx, cx, yTop, items) {
+    const padX = 28, h = 68, gap = 20;
+    ctx.font = "600 36px Inter, system-ui";
+    const ws = items.map(it => ctx.measureText(it.text).width + padX * 2);
+    const total = ws.reduce((a, b) => a + b, 0) + gap * (items.length - 1);
+    let x = cx - total / 2;
+    items.forEach((it, i) => {
+      const w = ws[i];
+      ctx.fillStyle = "rgba(255,255,255,0.08)"; roundRectPath(ctx, x, yTop, w, h, h / 2); ctx.fill();
+      ctx.strokeStyle = hexA(it.color, 0.55); ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = it.color; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.font = "600 36px Inter, system-ui";
+      ctx.fillText(it.text, x + w / 2, yTop + h / 2 + 2);
+      x += w + gap;
+    });
+    return h;
+  }
+  function storyBg(ctx, W, H, color) {
+    ctx.fillStyle = "#120f17"; ctx.fillRect(0, 0, W, H);
+    let g = ctx.createLinearGradient(0, 0, W, H);
+    g.addColorStop(0, hexA(color, 0.34)); g.addColorStop(0.5, "rgba(18,15,23,0)"); g.addColorStop(1, hexA(color, 0.2));
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    let r1 = ctx.createRadialGradient(W * 0.5, H * 0.3, 0, W * 0.5, H * 0.3, W);
+    r1.addColorStop(0, hexA(color, 0.42)); r1.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = r1; ctx.fillRect(0, 0, W, H);
+    // sparkles
+    ctx.fillStyle = hexA(color, 0.5);
+    for (let i = 0; i < 26; i++) { const sx = Math.random() * W, sy = Math.random() * H, s = Math.random() * 4 + 1;
+      ctx.globalAlpha = Math.random() * 0.5 + 0.1; ctx.beginPath(); ctx.arc(sx, sy, s, 0, 7); ctx.fill(); }
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = hexA(color, 0.45); ctx.lineWidth = 5; roundRectPath(ctx, 26, 26, W - 52, H - 52, 54); ctx.stroke();
+  }
+  function brandTop(ctx, W) {
+    ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+    ctx.font = "800 70px Inter, system-ui"; ctx.fillStyle = "#c6a4ff";
+    ctx.fillText("хочу", W / 2, 150);
+  }
+  function drawQR(ctx, text, x, y, size, dark) {
+    if (window.qrcode) { try {
+      const qr = window.qrcode(0, "M"); qr.addData(text); qr.make();
+      const n = qr.getModuleCount(), cell = size / n;
+      ctx.fillStyle = dark;
+      for (let r = 0; r < n; r++) for (let c = 0; c < n; c++)
+        if (qr.isDark(r, c)) ctx.fillRect(Math.floor(x + c * cell), Math.floor(y + r * cell), Math.ceil(cell), Math.ceil(cell));
+      return;
+    } catch (e) {} }
+    ctx.fillStyle = dark; ctx.font = "bold 44px Inter, system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("↗", x + size / 2, y + size / 2);
+  }
+  function storyFooter(ctx, W, H, handle, link, color) {
+    const qs = 300, qx = (W - qs) / 2, qy = H - 620;
+    ctx.fillStyle = "#fff"; roundRectPath(ctx, qx - 32, qy - 32, qs + 64, qs + 64, 42); ctx.fill();
+    drawQR(ctx, link, qx, qy, qs, "#141218");
+    ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = "#fff"; ctx.font = "700 40px Inter, system-ui";
+    ctx.fillText(T("story_cta"), W / 2, qy + qs + 94);
+    ctx.fillStyle = hexA(color, 0.98); ctx.font = "800 50px Inter, system-ui";
+    ctx.fillText(handle, W / 2, qy + qs + 166);
+    ctx.fillStyle = "rgba(236,233,243,0.5)"; ctx.font = "600 34px Inter, system-ui";
+    ctx.fillText("хочу · hochu", W / 2, H - 58);
+  }
+
+  function getWishForStory(wishId, author) {
+    if (author === me) return myData().wishes.find(x => x.id === wishId) || myData().wishes[0];
+    const f = window.DEMO_FRIENDS.find(x => x.handle === author);
+    if (f) { const idx = parseInt(String(wishId).split("-").pop()) || 0;
+      return normalizeDemo(f.wishes[idx] || f.wishes[0], author, idx); }
+    return myData().wishes[0];
+  }
+
+  function drawStoryWish(canvas, wishId, author) {
+    const ctx = canvas.getContext("2d"), W = 1080, H = 1920;
+    const w = getWishForStory(wishId, author); if (!w) return;
+    const cc = window.CATS.find(c => c.id === w.cat) || { icon: "🎯", color: "#a378ff" };
+    storyBg(ctx, W, H, cc.color);
+    brandTop(ctx, W);
+
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.font = "150px system-ui"; ctx.fillText(cc.icon, W / 2, 420);
+    drawPillRow(ctx, W / 2, 530, [{ text: T("cat_" + w.cat).toUpperCase(), color: cc.color }]);
+
+    ctx.fillStyle = "#fff"; ctx.textBaseline = "alphabetic";
+    const size = w.title.length > 40 ? 60 : w.title.length > 22 ? 74 : 90;
+    ctx.font = `800 ${size}px Inter, system-ui`;
+    const lines = wrapLines(ctx, w.title, W - 200).slice(0, 5);
+    let ty = 720;
+    lines.forEach(ln => { ctx.fillText(ln, W / 2, ty); ty += size * 1.2; });
+
+    if (w.desc) { ctx.font = "400 36px Inter, system-ui"; ctx.fillStyle = "rgba(236,233,243,0.7)";
+      wrapLines(ctx, w.desc, W - 260).slice(0, 2).forEach(ln => { ctx.fillText(ln, W / 2, ty + 6); ty += 48; }); }
+
+    const pills = [{ text: prioIcon(w.prio) + " " + T("prio_" + w.prio), color: prioColor(w.prio) }];
+    if (w.deadline) pills.push({ text: "📅 " + deadlineText(w), color: "#ece9f3" });
+    pills.push({ text: T("type_" + w.type), color: cc.color });
+    ty += 54; drawPillRow(ctx, W / 2, ty, pills); ty += 120;
+
+    if (w.tags && w.tags.length) { ctx.font = "600 38px Inter, system-ui"; ctx.fillStyle = hexA(cc.color, 0.98);
+      ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.fillText(w.tags.slice(0, 4).map(t => "#" + t).join("  "), W / 2, ty); }
+
+    storyFooter(ctx, W, H, "@" + author, wishLink(author, wishId), cc.color);
+  }
+
+  function drawStoryList(canvas) {
+    const ctx = canvas.getContext("2d"), W = 1080, H = 1920;
+    const d = myData();
+    let wishes = d.wishes.filter(x => x.privacy !== "private");
+    if (catFilter !== "all") wishes = wishes.filter(x => x.cat === catFilter);
+    const accent = "#a378ff";
+    storyBg(ctx, W, H, accent); brandTop(ctx, W);
+
+    ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = "#fff"; ctx.font = "800 72px Inter, system-ui";
+    ctx.fillText(T("story_mywishlist"), W / 2, 310);
+    ctx.fillStyle = hexA(accent, 0.98); ctx.font = "700 44px Inter, system-ui";
+    ctx.fillText("@" + me, W / 2, 378);
+
+    let y = 470; const rowH = 148, max = 5, inner = rowH - 24;
+    wishes.slice(0, max).forEach(w => {
+      const cc = window.CATS.find(c => c.id === w.cat) || { icon: "🎯", color: "#a378ff" };
+      const x = 90, rw = W - 180, cy = y + inner / 2;
+      ctx.fillStyle = "rgba(255,255,255,0.06)"; roundRectPath(ctx, x, y, rw, inner, 28); ctx.fill();
+      ctx.strokeStyle = hexA(cc.color, 0.4); ctx.lineWidth = 2; ctx.stroke();
+      ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.font = "64px system-ui";
+      ctx.fillText(cc.icon, x + 38, cy);
+      ctx.fillStyle = "#fff"; ctx.font = "700 42px Inter, system-ui";
+      const title = w.title.length > 26 ? w.title.slice(0, 25) + "…" : w.title;
+      ctx.fillText(title, x + 140, cy - 16);
+      ctx.fillStyle = "rgba(236,233,243,0.62)"; ctx.font = "500 32px Inter, system-ui";
+      let sub = T("cat_" + w.cat); if (w.deadline) sub += " · 📅 " + deadlineText(w);
+      ctx.fillText(sub, x + 140, cy + 28);
+      ctx.fillStyle = prioColor(w.prio); ctx.beginPath(); ctx.arc(x + rw - 46, cy, 15, 0, 7); ctx.fill();
+      y += rowH;
+    });
+    if (wishes.length > max) { ctx.fillStyle = "rgba(236,233,243,0.62)"; ctx.font = "600 36px Inter, system-ui";
+      ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.fillText(T("story_more").replace("{n}", wishes.length - max), W / 2, y + 44); }
+
+    storyFooter(ctx, W, H, "@" + me, profileLink(), accent);
   }
 
   // =====================================================
