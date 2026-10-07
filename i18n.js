@@ -153,6 +153,11 @@ window.I18N = {
     reward_done: "Realized! +{n} pts",
     reward_step: "Step done! +{n} pts",
     levelUp: "Level up! You're now level {n} 🚀",
+
+    support_t: "Support",
+    support_sub: "Questions, ideas or bugs? We'd love to hear from you.",
+    support_email: "✉️ Email us",
+    support_tg: "✈️ Telegram",
   },
 
   ru: {
@@ -303,6 +308,11 @@ window.I18N = {
     reward_done: "Сбылось! +{n} очк.",
     reward_step: "Шаг готов! +{n} очк.",
     levelUp: "Новый уровень! Теперь уровень {n} 🚀",
+
+    support_t: "Поддержка",
+    support_sub: "Вопросы, идеи или баги? Будем рады твоему сообщению.",
+    support_email: "✉️ Написать на почту",
+    support_tg: "✈️ Телеграм",
   },
 
   tr: {
@@ -453,5 +463,10 @@ window.I18N = {
     reward_done: "Gerçekleşti! +{n} puan",
     reward_step: "Adım tamam! +{n} puan",
     levelUp: "Seviye atladın! Artık seviye {n} 🚀",
+
+    support_t: "Destek",
+    support_sub: "Soru, fikir veya hata mı var? Bize yazmaktan çekinme.",
+    support_email: "✉️ E-posta gönder",
+    support_tg: "✈️ Telegram",
   },
 };

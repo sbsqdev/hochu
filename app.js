@@ -104,6 +104,8 @@
         applyI18nStatic();
       };
     });
+    const authSup = document.getElementById("auth-support");
+    if (authSup) authSup.onclick = openSupport;
     document.getElementById("auth-form").onsubmit = async (e) => {
       e.preventDefault();
       const name = document.getElementById("auth-name").value.trim();
@@ -296,6 +298,7 @@
         <div class="side-foot">
           <button class="btn btn-primary btn-block" data-act="new">${T("newWish")}</button>
           <div class="lang-switch" id="side-lang"></div>
+          <button class="btn btn-ghost btn-block btn-sm" data-act="support">💬 ${T("support_t")}</button>
           <button class="btn btn-ghost btn-block btn-sm" data-act="signout">${T("signout")}</button>
         </div>
       </aside>`;
@@ -310,6 +313,7 @@
       <div class="topbar">
         <h1>${T(titles[view])}</h1>
         <div class="topbar-actions">
+          <button class="icon-btn" data-act="support" title="${T("support_t")}">💬</button>
           <span class="streak-chip">🔥 ${d.streak} ${T("streak")}</span>
           <div class="me-pill">
             <div class="avatar">${u.avatar || "🙂"}</div>
@@ -329,6 +333,7 @@
   function bindShell() {
     document.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => { view = b.dataset.nav; catFilter = "all"; setFilter = null; render(); });
     document.querySelector('[data-act="new"]').onclick = () => openCompose();
+    document.querySelectorAll('[data-act="support"]').forEach(b => b.onclick = openSupport);
     document.querySelector('[data-act="signout"]').onclick = async () => {
       if (window.SUPA_READY) { try { await window.sb.auth.signOut(); } catch (e) {} }
       me = null; authUid = null; localStorage.removeItem(LS.session); location.reload();
@@ -1177,6 +1182,29 @@
   //  STORY GENERATOR — auto 9:16 Instagram-story image + QR
   // =====================================================
   let storyState = null;
+
+  // ---------- support ----------
+  const SUPPORT_EMAIL = "sbsqbiz@gmail.com";
+  const SUPPORT_TG = "https://t.me/sab_realism";
+  function openSupport() {
+    const html = `
+      <div class="modal-bg" id="sup-bg"><div class="modal" style="max-width:400px">
+        <h2>💬 ${T("support_t")}</h2>
+        <p style="color:var(--mut);font-size:14px;margin:0 0 18px">${T("support_sub")}</p>
+        <a class="btn btn-primary btn-block" style="margin-bottom:10px"
+           href="mailto:${SUPPORT_EMAIL}?subject=hochu%20%E2%80%94%20support">${T("support_email")}</a>
+        <a class="btn btn-ghost btn-block" href="${SUPPORT_TG}" target="_blank" rel="noopener">${T("support_tg")}</a>
+        <p style="color:var(--mut2);font-size:12px;text-align:center;margin:14px 0 0">
+          ${SUPPORT_EMAIL} · t.me/sab_realism</p>
+        <div class="modal-foot"><button class="btn btn-ghost" id="sup-close">${T("cancel")}</button></div>
+      </div></div>`;
+    const wrap = document.createElement("div"); wrap.innerHTML = html;
+    document.body.appendChild(wrap.firstElementChild);
+    const bg = document.getElementById("sup-bg");
+    const close = () => bg.remove();
+    bg.onclick = (e) => { if (e.target === bg) close(); };
+    document.getElementById("sup-close").onclick = close;
+  }
 
   function wishLink(author, id) { return `${location.origin}${location.pathname}#/w/${author}/${id}`; }
   function profileLink() { return `${location.origin}${location.pathname}#/u/${me}`; }
