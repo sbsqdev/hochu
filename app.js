@@ -38,7 +38,7 @@
     if (!d[me].sets) d[me].sets = [];
     return d[me];
   }
-  function saveMy(obj) { const d = allData(); d[me] = obj; write(LS.data, d); }
+  function saveMy(obj) { const d = allData(); d[me] = obj; write(LS.data, d); pushCloud(obj); }
 
   const today = () => new Date().toISOString().slice(0, 10);
   const uid = () => Math.random().toString(36).slice(2, 9);
@@ -65,7 +65,7 @@
   }
   function showAuth() { authScreen.classList.remove("hidden"); applyI18nStatic(); }
   function afterLogin() {
-    seedIfEmpty(); updateStreak();
+    updateStreak();   // each account starts with its own (empty) wishlist — no shared seed
     authScreen.classList.add("hidden");
     view = "mine"; render();
   }
@@ -164,6 +164,21 @@
     localStorage.setItem(LS.session, me);
     const db = users(); db[me] = { name: prof.name, handle: prof.handle, avatar: prof.avatar, uid: user.id };
     write(LS.users, db);
+    // pull this account's wishes/sets from the cloud so it works across devices
+    const all = allData();
+    if (prof.data && Array.isArray(prof.data.wishes)) all[me] = prof.data;
+    else if (!all[me]) all[me] = { wishes: [], friends: [], likes: {}, sets: [], xp: 0, streak: 1, lastActive: today() };
+    write(LS.data, all);
+  }
+
+  // push the whole per-user blob to Supabase (debounced); no-op in on-device mode
+  let cloudTimer = null;
+  function pushCloud(obj) {
+    if (!window.SUPA_READY || !authUid) return;
+    clearTimeout(cloudTimer);
+    cloudTimer = setTimeout(() => {
+      window.sb.from("profiles").update({ data: obj }).eq("id", authUid).then(() => {}, () => {});
+    }, 600);
   }
 
   // ----- Local (on-device) auth fallback -----

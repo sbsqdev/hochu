@@ -19,6 +19,7 @@ create table public.profiles (
   handle     text unique not null,
   name       text,
   avatar     text,
+  data       jsonb default '{}'::jsonb,   -- this user's wishes + sets (cross-device sync)
   created_at timestamptz default now()
 );
 
@@ -70,8 +71,15 @@ git push
 Vercel auto-redeploys. Now sign-ups create real accounts in your database, and a profile
 shows up in **Table Editor → profiles**.
 
+### Already have the table from before?
+If you created `profiles` earlier (without the `data` column), just run this once to add it:
+
+```sql
+alter table public.profiles add column if not exists data jsonb default '{}'::jsonb;
+```
+
 ---
 
-**Note on scope:** this adds real accounts + profiles. Wishes still live on each device
-(localStorage) for now — syncing wishes to the cloud is the natural next step (another table
-+ a few queries) whenever you want it.
+**Cross-device sync:** once the keys are in `supabase.js`, each account's wishes **and** sets
+are saved to its profile's `data` column and reload on any device you log in from. In on-device
+mode (no keys) everything stays local to that browser, as before.
