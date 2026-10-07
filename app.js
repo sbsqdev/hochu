@@ -18,6 +18,7 @@
   let authUid = null;                                  // Supabase auth user id, when in cloud mode
   let view = "mine";
   let catFilter = "all";
+  let setFilter = null;   // active set id, or null for all
   let authMode = "signin";
 
   function detectLang() {
@@ -33,7 +34,8 @@
   const allData = () => read(LS.data, {});
   function myData() {
     const d = allData();
-    if (!d[me]) d[me] = { wishes: [], friends: [], likes: {}, xp: 0, streak: 1, lastActive: today() };
+    if (!d[me]) d[me] = { wishes: [], friends: [], likes: {}, sets: [], xp: 0, streak: 1, lastActive: today() };
+    if (!d[me].sets) d[me].sets = [];
     return d[me];
   }
   function saveMy(obj) { const d = allData(); d[me] = obj; write(LS.data, d); }
@@ -310,7 +312,7 @@
   }
 
   function bindShell() {
-    document.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => { view = b.dataset.nav; catFilter = "all"; render(); });
+    document.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => { view = b.dataset.nav; catFilter = "all"; setFilter = null; render(); });
     document.querySelector('[data-act="new"]').onclick = () => openCompose();
     document.querySelector('[data-act="signout"]').onclick = async () => {
       if (window.SUPA_READY) { try { await window.sb.auth.signOut(); } catch (e) {} }
@@ -329,9 +331,17 @@
   function renderView() {
     stopGraph();
     const v = document.getElementById("view");
-    if (view === "mine") v.innerHTML =
-      `<div class="mine-toolbar"><button class="btn btn-ghost btn-sm" data-act="makestory">${T("story_make")}</button></div>`
-      + catRow() + grid(myWishes());
+    if (view === "mine") {
+      const list = myWishes();
+      const gridHtml = (setFilter && list.length === 0)
+        ? `<div class="empty"><div class="em">📁</div>
+             <h3>${esc((myData().sets.find(s => s.id === setFilter) || {}).name || T("sets_t"))}</h3>
+             <p>${T("set_empty")}</p></div>`
+        : grid(list);
+      v.innerHTML =
+        `<div class="mine-toolbar"><button class="btn btn-ghost btn-sm" data-act="makestory">${T("story_make")}</button></div>`
+        + catRow() + setsRow() + gridHtml;
+    }
     else if (view === "feed") v.innerHTML = catRow() + grid(feedWishes());
     else if (view === "graph") { v.innerHTML = graphView(); setupGraph(); }
     else if (view === "friends") v.innerHTML = friendsView();
@@ -343,6 +353,8 @@
   function myWishes() {
     let w = myData().wishes.slice();
     if (catFilter !== "all") w = w.filter(x => x.cat === catFilter);
+    if (setFilter) { const s = myData().sets.find(ss => ss.id === setFilter);
+      const ids = new Set(s ? s.wishIds : []); w = w.filter(x => ids.has(x.id)); }
     return w.map(x => ({ w: x, author: me, mine: true }))
             .sort(sortWishes);
   }
@@ -377,6 +389,87 @@
       .concat(window.CATS.map(c =>
         `<button class="cat-chip ${catFilter===c.id?'active':''}" data-cat="${c.id}">${c.icon} ${T('cat_'+c.id)}</button>`));
     return `<div class="cat-row">${chips.join("")}</div>`;
+  }
+
+  // ---------- sets (collections) ----------
+  function setsRow() {
+    const sets = myData().sets;
+    let chips = `<span class="sets-label">${T("sets_t")}</span>`;
+    if (sets.length) {
+      chips += `<button class="set-chip ${!setFilter ? "active" : ""}" data-set="all">🗂️ ${T("sets_all")}</button>`;
+      chips += sets.map(s => `<button class="set-chip ${setFilter === s.id ? "active" : ""}" data-set="${s.id}">${s.emoji || "📁"} ${esc(s.name)} <b>${(s.wishIds || []).length}</b></button>`).join("");
+    }
+    chips += `<button class="set-chip new" data-set="__new">＋ ${T("sets_new")}</button>`;
+    return `<div class="sets-row">${chips}</div>`;
+  }
+  const SET_EMOJIS = ["📁","✈️","💍","🏖️","🎂","🏡","💪","🌟","🎯","🛍️","🍽️","💘","🧘","📚","🚗"];
+
+  function openNewSet(onDone) {
+    let chosen = SET_EMOJIS[0];
+    const html = `
+      <div class="modal-bg" id="set-bg"><div class="modal" style="max-width:420px">
+        <h2>${T("sets_new")}</h2>
+        <div class="field"><input id="set-name" placeholder="${T("set_name_ph")}" /></div>
+        <div class="field" style="margin-top:12px"><span>${T("set_pick_emoji")}</span>
+          <div class="emoji-grid" id="set-emoji">${SET_EMOJIS.map((e,i)=>`<button type="button" data-e="${e}" class="${i===0?"on":""}">${e}</button>`).join("")}</div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn btn-ghost" id="set-cancel">${T("cancel")}</button>
+          <button class="btn btn-primary" id="set-save">${T("set_create")}</button>
+        </div>
+      </div></div>`;
+    const wrap = document.createElement("div"); wrap.innerHTML = html;
+    document.body.appendChild(wrap.firstElementChild);
+    const bg = document.getElementById("set-bg");
+    const close = () => bg.remove();
+    bg.onclick = (e) => { if (e.target === bg) close(); };
+    document.getElementById("set-cancel").onclick = close;
+    document.querySelectorAll("#set-emoji button").forEach(b => b.onclick = () => {
+      document.querySelectorAll("#set-emoji button").forEach(x => x.classList.remove("on"));
+      b.classList.add("on"); chosen = b.dataset.e;
+    });
+    document.getElementById("set-save").onclick = () => {
+      const name = document.getElementById("set-name").value.trim();
+      if (!name) { document.getElementById("set-name").focus(); return; }
+      const d = myData(); const id = uid();
+      d.sets.push({ id, name, emoji: chosen, wishIds: [] }); saveMy(d);
+      close(); if (onDone) onDone(id); else { setFilter = id; renderView(); }
+    };
+    setTimeout(() => document.getElementById("set-name").focus(), 50);
+  }
+
+  function openSetPicker(wishId) {
+    const build = () => {
+      const d = myData(); const sets = d.sets;
+      return `
+        <div class="modal-bg" id="sp-bg"><div class="modal" style="max-width:420px">
+          <h2>${T("add_to_set")}</h2>
+          ${sets.length ? `<div class="set-list">${sets.map(s => {
+            const on = (s.wishIds || []).includes(wishId);
+            return `<button class="set-pick ${on ? "on" : ""}" data-toggle="${s.id}">
+              <span>${s.emoji || "📁"} ${esc(s.name)}</span><span class="chk">${on ? "✓" : ""}</span></button>`;
+          }).join("")}</div>` : `<p class="auth-note" style="text-align:left">${T("set_none")}</p>`}
+          <button class="btn btn-ghost btn-block" id="sp-new" style="margin-top:12px">＋ ${T("sets_new")}</button>
+          <div class="modal-foot"><button class="btn btn-primary" id="sp-done">${T("done")}</button></div>
+        </div></div>`;
+    };
+    const mount = () => {
+      const old = document.getElementById("sp-bg"); if (old) old.remove();
+      const wrap = document.createElement("div"); wrap.innerHTML = build();
+      document.body.appendChild(wrap.firstElementChild);
+      const bg = document.getElementById("sp-bg");
+      bg.onclick = (e) => { if (e.target === bg) bg.remove(); };
+      document.getElementById("sp-done").onclick = () => { bg.remove(); renderView(); };
+      document.getElementById("sp-new").onclick = () => openNewSet(() => mount());
+      document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = () => {
+        const d = myData(); const s = d.sets.find(ss => ss.id === b.dataset.toggle);
+        s.wishIds = s.wishIds || [];
+        const i = s.wishIds.indexOf(wishId);
+        if (i >= 0) s.wishIds.splice(i, 1); else s.wishIds.push(wishId);
+        saveMy(d); mount();
+      });
+    };
+    mount();
   }
 
   // ---------- grid + cards ----------
@@ -431,6 +524,7 @@
           <button class="like-btn ${liked?'on':''}" data-like="${w.id}">${liked?'❤️':'🤍'} ${likeN}</button>
           ${mine && !w.done ? `<button class="icon-btn" data-complete="${w.id}" title="${T('complete')}">✓</button>`:''}
           ${mine && w.done ? `<button class="icon-btn" data-undo="${w.id}" title="${T('undo')}">↺</button>`:''}
+          ${mine ? `<button class="icon-btn" data-sets="${w.id}" title="${T('add_to_set')}">📁</button>`:''}
           <button class="icon-btn" data-story="${w.id}" data-storyauthor="${author}" title="${T('story_btn')}">📸</button>
           <button class="icon-btn" data-share="${w.id}" title="${T('share')}">🔗</button>
           ${mine ? `<button class="icon-btn" data-del="${w.id}" title="${T('delete')}">🗑️</button>`:''}
@@ -466,6 +560,12 @@
     document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => delWish(b.dataset.del));
     document.querySelectorAll("[data-share]").forEach(b => b.onclick = () => shareWish(b.dataset.share));
     document.querySelectorAll("[data-story]").forEach(b => b.onclick = () => openStory("wish", b.dataset.story, b.dataset.storyauthor));
+    document.querySelectorAll("[data-sets]").forEach(b => b.onclick = () => openSetPicker(b.dataset.sets));
+    document.querySelectorAll("[data-set]").forEach(b => b.onclick = () => {
+      if (b.dataset.set === "__new") return openNewSet();
+      setFilter = b.dataset.set === "all" ? null : b.dataset.set;
+      renderView();
+    });
     const ms = document.querySelector('[data-act="makestory"]');
     if (ms) ms.onclick = () => openStory("list");
     document.querySelectorAll(".step[data-step]").forEach(el => {
@@ -520,21 +620,47 @@
   }
 
   // ---------- friends ----------
+  // overlap between me and a demo friend: shared #tags + categories
+  function similarity(friend) {
+    const myTags = new Set(), myCats = new Set();
+    myData().wishes.forEach(w => { myCats.add(w.cat); (w.tags || []).forEach(t => myTags.add(t)); });
+    const fTags = new Set(), fCats = new Set();
+    (friend.wishes || []).forEach(w => { fCats.add(w.cat); (w.tags || []).forEach(t => fTags.add(t)); });
+    const sharedTags = [...fTags].filter(t => myTags.has(t));
+    const sharedCats = [...fCats].filter(c => myCats.has(c));
+    return { score: sharedTags.length * 2 + sharedCats.length, sharedTags, sharedCats };
+  }
+
   function friendsView() {
     const d = myData();
     const mine = d.friends;
-    const suggestions = window.DEMO_FRIENDS.filter(f => !mine.includes(f.handle));
-    const rowOf = (f, added) => `
+    const hasWishes = d.wishes.length > 0;
+    const rowOf = (f, added, sim) => {
+      let chips = "";
+      if (sim && sim.score > 0) {
+        const cats = sim.sharedCats.map(c => { const cc = window.CATS.find(x => x.id === c);
+          return `<span class="ov-chip">${cc.icon} ${T("cat_" + c)}</span>`; });
+        const tags = sim.sharedTags.map(t => `<span class="ov-chip tag">#${esc(t)}</span>`);
+        chips = `<div class="overlaps">${cats.concat(tags).slice(0, 4).join("")}</div>`;
+      }
+      return `
       <div class="friend-row">
         <div class="avatar">${f.avatar}</div>
         <div class="friend-meta">
-          <div class="fn">${esc(f.name)}</div>
+          <div class="fn">${esc(f.name)} ${sim && sim.score > 0 ? `<span class="match">${sim.sharedTags.length + sim.sharedCats.length} ${T("shared_word")}</span>` : ""}</div>
           <div class="fh">@${f.handle}</div>
-          <div class="friend-wishes">${f.wishes.map(w=>esc(w.title)).join(" · ")}</div>
+          ${chips || `<div class="friend-wishes">${(f.wishes||[]).map(w=>esc(w.title)).join(" · ")}</div>`}
         </div>
         ${added ? `<span class="badge">${T("added")} ✓</span>`
                 : `<button class="btn btn-ghost btn-sm" data-addfriend="${f.handle}">${T("friends_add")}</button>`}
       </div>`;
+    };
+
+    const notFriends = window.DEMO_FRIENDS.filter(f => !mine.includes(f.handle));
+    const scored = notFriends.map(f => ({ f, sim: similarity(f) }));
+    const similar = scored.filter(x => x.sim.score > 0).sort((a, b) => b.sim.score - a.sim.score);
+    const rest = scored.filter(x => x.sim.score === 0);
+
     return `
       <div class="add-friend">
         <input id="add-friend-input" placeholder="${T('friends_add_ph')}" />
@@ -542,10 +668,14 @@
       </div>
       ${mine.length ? mine.map(h => {
           const f = window.DEMO_FRIENDS.find(x=>x.handle===h) || {handle:h,name:h,avatar:'🙂',wishes:[]};
-          return rowOf(f, true);
+          return rowOf(f, true, similarity(f));
         }).join("") : `<p class="auth-note" style="text-align:left">${T("friends_none")}</p>`}
-      <h3 style="margin:22px 0 10px;font-size:14px;color:var(--mut)">${T("suggested")}</h3>
-      ${suggestions.map(f => rowOf(f, false)).join("")}
+
+      <h3 class="section-h">✨ ${T("similar_t")}</h3>
+      ${similar.length ? similar.map(x => rowOf(x.f, false, x.sim)).join("")
+        : `<p class="auth-note" style="text-align:left">${T("similar_none")}</p>`}
+
+      ${rest.length ? `<h3 class="section-h">${T("suggested")}</h3>${rest.map(x => rowOf(x.f, false)).join("")}` : ""}
     `;
   }
   function addFriendFromInput() {
@@ -1011,13 +1141,17 @@
       const title = document.getElementById("c-title").value.trim();
       if (!title) { document.getElementById("c-title").focus(); return; }
       const d = myData();
-      d.wishes.unshift(mkWish({
+      const nw = mkWish({
         title, desc: document.getElementById("c-desc").value.trim(),
         cat: state.cat, type: state.type, prio: state.prio,
         freq: state.type === "habit" ? state.freq : "once",
         deadline: document.getElementById("c-deadline").value,
         privacy: state.privacy, tags: state.tags, steps: state.steps,
-      }));
+      });
+      d.wishes.unshift(nw);
+      // if a set is currently active, drop the new wish into it
+      if (setFilter) { const s = d.sets.find(ss => ss.id === setFilter);
+        if (s) { s.wishIds = s.wishIds || []; s.wishIds.push(nw.id); } }
       saveMy(d);
       close(); view = "mine"; render(); renderView();
     };
@@ -1226,16 +1360,33 @@
     const d = myData();
     let wishes = d.wishes.filter(x => x.privacy !== "private");
     if (catFilter !== "all") wishes = wishes.filter(x => x.cat === catFilter);
-    const accent = "#a378ff";
+    let title = T("story_mywishlist"), accent = "#a378ff";
+    if (setFilter) { const s = d.sets.find(ss => ss.id === setFilter);
+      if (s) { const ids = new Set(s.wishIds || []); wishes = wishes.filter(x => ids.has(x.id));
+        title = (s.emoji || "📁") + " " + s.name; } }
+    else if (catFilter !== "all") { const cc = window.CATS.find(c => c.id === catFilter);
+      if (cc) { title = cc.icon + " " + T("cat_" + catFilter); accent = cc.color; } }
+
     storyBg(ctx, W, H, accent); brandTop(ctx, W);
 
+    // title
     ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
-    ctx.fillStyle = "#fff"; ctx.font = "800 72px Inter, system-ui";
-    ctx.fillText(T("story_mywishlist"), W / 2, 310);
-    ctx.fillStyle = hexA(accent, 0.98); ctx.font = "700 44px Inter, system-ui";
-    ctx.fillText("@" + me, W / 2, 378);
+    ctx.fillStyle = "#fff"; ctx.font = "800 70px Inter, system-ui";
+    ctx.fillText(title.length > 24 ? title.slice(0, 23) + "…" : title, W / 2, 300);
 
-    let y = 470; const rowH = 148, max = 5, inner = rowH - 24;
+    // own account: avatar + @handle, centered
+    const av = (users()[me] || {}).avatar || "🙂";
+    ctx.font = "700 44px Inter, system-ui";
+    const hw = ctx.measureText("@" + me).width, avS = 58, gap = 16, total = avS + gap + hw;
+    let sx = W / 2 - total / 2, acy = 372;
+    ctx.fillStyle = "rgba(255,255,255,0.12)";
+    ctx.beginPath(); ctx.arc(sx + avS / 2, acy - 14, avS / 2, 0, 7); ctx.fill();
+    ctx.font = "34px system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(av, sx + avS / 2, acy - 14);
+    ctx.font = "700 44px Inter, system-ui"; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = hexA(accent, 0.98); ctx.fillText("@" + me, sx + avS + gap, acy);
+
+    let y = 460; const rowH = 148, max = 5, inner = rowH - 24;
     wishes.slice(0, max).forEach(w => {
       const cc = window.CATS.find(c => c.id === w.cat) || { icon: "🎯", color: "#a378ff" };
       const x = 90, rw = W - 180, cy = y + inner / 2;
